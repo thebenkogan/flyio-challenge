@@ -20,15 +20,19 @@ func main() {
 			return err
 		}
 		ctx := context.Background()
+		delta := int(body["delta"].(float64))
 
 		addMutex.Lock()
-		delta := int(body["delta"].(float64))
-		prev, err := kv.ReadInt(ctx, n.ID())
-		if err != nil {
-			prev = 0
-		}
-		if err := kv.Write(ctx, n.ID(), prev+delta); err != nil {
-			return err
+		success := false
+		for !success {
+			success = true
+			prev, err := kv.ReadInt(ctx, "counter")
+			if err != nil {
+				prev = 0
+			}
+			if err := kv.CompareAndSwap(ctx, "counter", prev, prev+delta, true); err != nil {
+				success = false
+			}
 		}
 		addMutex.Unlock()
 
@@ -40,13 +44,9 @@ func main() {
 	n.Handle("read", func(msg maelstrom.Message) error {
 		ctx := context.Background()
 
-		total := 0
-		for _, node := range n.NodeIDs() {
-			val, err := kv.ReadInt(ctx, node)
-			if err != nil {
-				val = 0
-			}
-			total += val
+		total, err := kv.ReadInt(ctx, "counter")
+		if err != nil {
+			return err
 		}
 
 		res := make(map[string]any)
