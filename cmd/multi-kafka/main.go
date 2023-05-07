@@ -12,6 +12,18 @@ import (
 // idea: have individual kv entries for each message along with a latest offset entry
 // - on insertion, increment the latest offset entry via CAS to claim next offset entry
 
+func offsetKey(key string, offset int) string {
+	return key + "-" + strconv.Itoa(offset)
+}
+
+func latestOffsetKey(key string) string {
+	return "latest-" + key
+}
+
+func committedOffsetKey(key string) string {
+	return "committed-" + key
+}
+
 type KafkaNode struct {
 	n  *maelstrom.Node
 	kv *maelstrom.KV
@@ -22,12 +34,12 @@ func (kn *KafkaNode) claimNextOffset(ctx context.Context, key string) int {
 	success := false
 	for !success {
 		success = true
-		prev, err := kn.kv.ReadInt(ctx, "latest-"+key)
+		prev, err := kn.kv.ReadInt(ctx, latestOffsetKey(key))
 		if err != nil {
 			prev = -1
 		}
 		claimedOffset = prev + 1
-		if err := kn.kv.CompareAndSwap(ctx, "latest-"+key, prev, prev+1, true); err != nil {
+		if err := kn.kv.CompareAndSwap(ctx, latestOffsetKey(key), prev, prev+1, true); err != nil {
 			success = false
 		}
 	}
@@ -44,7 +56,7 @@ func (kn *KafkaNode) sendHandler(msg maelstrom.Message) error {
 	newMsg := int(body["msg"].(float64))
 
 	offset := kn.claimNextOffset(ctx, key)
-	if err := kn.kv.Write(ctx, key+"-"+strconv.Itoa(offset), newMsg); err != nil {
+	if err := kn.kv.Write(ctx, offsetKey(key, offset), newMsg); err != nil {
 		return err
 	}
 
@@ -66,7 +78,7 @@ func (kn *KafkaNode) pollHandler(msg maelstrom.Message) error {
 
 	msgs := make(map[string][][]int)
 	for key, offset := range body.Offsets {
-		msg, err := kn.kv.ReadInt(ctx, key+"-"+strconv.Itoa(int(offset)))
+		msg, err := kn.kv.ReadInt(ctx, offsetKey(key, int(offset)))
 		if err != nil {
 			continue
 		}
@@ -92,7 +104,7 @@ func (kn *KafkaNode) committedOffsetsHandler(msg maelstrom.Message) error {
 	ctx := context.Background()
 
 	for key, offset := range body.Offsets {
-		if err := kn.kv.Write(ctx, "offset-"+key, offset); err != nil {
+		if err := kn.kv.Write(ctx, committedOffsetKey(key), offset); err != nil {
 			return err
 		}
 	}
@@ -114,7 +126,7 @@ func (kn *KafkaNode) listCommittedOffsetsHandler(msg maelstrom.Message) error {
 
 	offsets := make(map[string]int)
 	for _, key := range body.Keys {
-		offset, err := kn.kv.ReadInt(ctx, "offset-"+key)
+		offset, err := kn.kv.ReadInt(ctx, committedOffsetKey(key))
 		if err != nil {
 			offset = 0
 		}
