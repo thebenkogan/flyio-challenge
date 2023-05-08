@@ -78,13 +78,15 @@ func (kn *KafkaNode) pollHandler(msg maelstrom.Message) error {
 
 	msgs := make(map[string][][]int)
 	for key, offset := range body.Offsets {
-		msg, err := kn.kv.ReadInt(ctx, offsetKey(key, int(offset)))
-		if err != nil {
-			continue
+		msgs[key] = [][]int{}
+		for {
+			msg, err := kn.kv.ReadInt(ctx, offsetKey(key, int(offset)))
+			if err != nil {
+				break
+			}
+			msgs[key] = append(msgs[key], []int{int(offset), msg})
+			offset++
 		}
-		res := make([][]int, 1)
-		res[0] = []int{int(offset), msg}
-		msgs[key] = res
 	}
 
 	res := make(map[string]any)
